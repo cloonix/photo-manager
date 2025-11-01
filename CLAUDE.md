@@ -53,11 +53,11 @@ A lightweight, self-contained photo management application built following the s
 - Non-recursive photo loading per folder
 
 ### Recycle Bin
-- Soft delete using `original_path` column (no separate table)
-- All metadata, albums, and tags remain in database
-- Physical file moved to `.recycle-bin/` subdirectory within photos folder
-- Restore to original location with conflict detection
-- Gracefully handles missing files during restore
+- Soft-delete using `deleted_at` timestamp column
+- Physical files remain in place (not moved)
+- All metadata, albums, and tags preserved
+- Restore clears `deleted_at` timestamp
+- "Empty Recycle Bin" button permanently deletes files and DB records
 
 ### RAW Photo Support
 - Extracts embedded JPEG preview when available (fast)
@@ -70,16 +70,13 @@ A lightweight, self-contained photo management application built following the s
 - **Database**: SQLite with proper indexes
 - **Container**: Python 3.13-slim base image
 
-## Architecture Decisions
+## Recent Improvements (Nov 2025)
 
-### Why No Rollback System?
-The rollback system was **removed** (Oct 2025) after determining it was:
-- **Prone to errors** - File operations could fail when files were permanently deleted
-- **Complex** - 13 SQLite triggers, ~500 lines of code for action logging and inverse operations
-- **Unreliable** - Depended on physical files existing, which couldn't be guaranteed
-- **Unnecessary** - The recycle bin provides adequate "undo" for the most important operation (deletion)
-
-**Better approach:** Focus on recycle bin for photo deletion recovery. Other operations (move, rename, album/tag changes) are non-destructive and easy to manually undo if needed.
+### Major Refactoring
+- **Consolidated authentication** - Single `auth()` function in `backend/dependencies.py` (~108 lines eliminated)
+- **Simplified recycle bin** - Soft-delete with `deleted_at` timestamp instead of file moves (~240 lines eliminated)
+- **Eliminated N+1 queries** - Bulk album photo endpoint (`GET /api/albums/{id}/photos`)
+- **Total impact**: ~350+ lines removed, cleaner codebase, faster album loading
 
 ## Not Implemented (Future Enhancements)
 - Video support
@@ -130,11 +127,10 @@ docker-compose down
 
 ## Important Notes
 
-- Photos are identified by content hash, so renaming/moving doesn't break metadata
-- Duplicate photos (same hash) are automatically skipped during scanning
-- External file deletions are hard deleted (not moved to recycle bin)
-- Filesystem watcher may have delays with Docker volume mounts
-- RAW thumbnail generation is slower (1-3 seconds vs <500ms for JPEG)
+- Photos identified by SHA256 hash - renaming/moving preserves metadata
+- Deleted photos use soft-delete (`deleted_at` timestamp) - files stay in place until "Empty Recycle Bin"
+- Duplicate photos (same hash) automatically skipped during scan
+- RAW thumbnail generation slower (1-3s vs <500ms for JPEG)
 
 ## API Documentation
 
