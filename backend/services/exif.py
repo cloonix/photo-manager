@@ -6,6 +6,7 @@ from datetime import datetime
 
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
+import rawpy
 
 
 def extract_exif_data(file_path: Path) -> Dict[str, Optional[str]]:
@@ -32,6 +33,12 @@ def extract_exif_data(file_path: Path) -> Dict[str, Optional[str]]:
     }
 
     try:
+        # Check if it's a RAW file
+        raw_extensions = {'.arw', '.cr2', '.cr3', '.nef', '.dng', '.orf', '.raf', '.rw2'}
+        if file_path.suffix.lower() in raw_extensions:
+            return _extract_raw_exif(file_path, metadata)
+        
+        # Handle regular image files with PIL
         with Image.open(file_path) as img:
             exif_data = img.getexif()
 
@@ -76,6 +83,89 @@ def extract_exif_data(file_path: Path) -> Dict[str, Optional[str]]:
         # Silently fail for unsupported formats or corrupted files
         print(f"Warning: Could not extract EXIF from {file_path}: {e}")
 
+    return metadata
+
+
+def _extract_raw_exif(file_path: Path, metadata: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
+    """
+    Extract EXIF metadata from RAW image files using rawpy.
+
+    Args:
+        file_path: Path to RAW image file
+        metadata: Dictionary to populate with metadata
+
+    Returns:
+        Dictionary containing EXIF metadata
+    """
+    try:
+        with rawpy.imread(str(file_path)) as raw:
+            # Get the embedded EXIF data
+            exif_data = raw.raw_image_visible.copy()  # This triggers metadata loading
+            
+            # Access metadata through rawpy's metadata interface
+            if hasattr(raw, 'raw_metadata'):
+                raw_meta = raw.raw_metadata
+                
+                # Camera info
+                metadata["camera_make"] = raw_meta.get('make', '').strip() if raw_meta.get('make') else None
+                metadata["camera_model"] = raw_meta.get('model', '').strip() if raw_meta.get('model') else None
+                
+                # Exposure settings
+                if raw_meta.get('iso_speed'):
+                    metadata["iso"] = int(raw_meta['iso_speed'])
+                if raw_meta.get('shutter'):
+                    metadata["shutter_speed"] = f"1/{int(1/raw_meta['shutter'])}" if raw_meta['shutter'] < 1 else f"{raw_meta['shutter']:.2f}s"
+                if raw_meta.get('aperture'):
+                    metadata["aperture"] = f"f/{raw_meta['aperture']:.1f}"
+                if raw_meta.get('focal_len'):
+                    metadata["focal_length"] = f"{raw_meta['focal_len']:.1f}mm"
+                if raw_meta.get('timestamp'):
+                    metadata["date_taken"] = datetime.fromtimestamp(raw_meta['timestamp']).isoformat()
+            
+            # Try to extract EXIF from embedded preview
+            try:
+                thumb = raw.extract_thumb()
+                if thumb.format == rawpy.ThumbFormat.JPEG:
+                    import io
+                    with Image.open(io.BytesIO(thumb.data)) as img:
+                        exif_data = img.getexif()
+                        if exif_data:
+                            for tag_id, value in exif_data.items():
+                                tag = TAGS.get(tag_id, tag_id)
+                                
+                                if tag == "Make" and not metadata["camera_make"]:
+                                    metadata["camera_make"] = str(value).strip()
+                                elif tag == "Model" and not metadata["camera_model"]:
+                                    metadata["camera_model"] = str(value).strip()
+                                elif tag == "LensModel":
+                                    metadata["lens_model"] = str(value).strip()
+                                elif tag == "FocalLength" and not metadata["focal_length"]:
+                                    metadata["focal_length"] = _format_focal_length(value)
+                                elif tag == "FNumber" and not metadata["aperture"]:
+                                    metadata["aperture"] = _format_aperture(value)
+                                elif tag == "ExposureTime" and not metadata["shutter_speed"]:
+                                    metadata["shutter_speed"] = _format_shutter_speed(value)
+                                elif (tag == "ISOSpeedRatings" or tag == "ISO") and not metadata["iso"]:
+                                    metadata["iso"] = int(value) if value else None
+                                elif (tag == "DateTimeOriginal" or tag == "DateTime") and not metadata["date_taken"]:
+                                    metadata["date_taken"] = _parse_exif_datetime(value)
+                            
+                            # Extract GPS from embedded preview
+                            gps_info = exif_data.get_ifd(0x8825)
+                            if gps_info:
+                                gps_data = {}
+                                for tag_id, value in gps_info.items():
+                                    tag = GPSTAGS.get(tag_id, tag_id)
+                                    gps_data[tag] = value
+                                lat, lon = _parse_gps_coordinates(gps_data)
+                                metadata["gps_latitude"] = lat
+                                metadata["gps_longitude"] = lon
+            except Exception:
+                pass  # Thumbnail extraction failed, continue with available data
+                
+    except Exception as e:
+        print(f"Warning: Could not extract EXIF from RAW file {file_path}: {e}")
+    
     return metadata
 
 
