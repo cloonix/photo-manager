@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="/static/js/alpine.min.js"></script>
+    <script src="/static/js/app.js?v=20251101001"></script>
+    <style>
+        .dragging {
+            opacity: 0.3 !important;
+            transform: scale(0.8);
+        }
+        
+        /* Custom drag image */
+        .drag-ghost {
+            position: absolute;
+            top: -1000px;
+            left: -1000px;
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            border: 2px solid #3b82f6;
+            opacity: 0.7;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div x-data="photoManager()" class="flex h-screen">
+        <!-- Login Screen (shown when not authenticated) -->
+        <div x-show="!authenticated" class="flex items-center justify-center w-full h-full bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
+            <div class="bg-gray-800 rounded-2xl p-8 text-center max-w-md w-full shadow-2xl border border-gray-700">
+                <div class="w-20 h-20 bg-gradient-to-r from-blue-500 to-purple-500 rounded-2xl mx-auto mb-6 flex items-center justify-center">
+                    <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-bold text-white mb-4">Photo Manager</h2>
+                <p class="text-gray-400 mb-8">Sign in to access your photo library</p>
+                <button @click="login()" class="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold py-3 px-6 rounded-xl hover:from-blue-700 hover:to-purple-700 transform transition-all duration-200 shadow-lg">
+                    <svg class="inline w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
+                    </svg>
+                    Sign In with OIDC
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Application (shown when authenticated) -->
+        <template x-if="authenticated">
+            <div class="flex w-full h-full">
+                <!-- Left Sidebar -->
+                <aside class="w-64 bg-gray-800 border-r border-gray-700 overflow-y-auto flex-shrink-0">
+            <!-- Sidebar Header -->
+            <div class="p-4 border-b border-gray-700">
+                <h1 class="text-xl font-semibold text-gray-100">Photo Manager</h1>
+            </div>
+
+            <!-- Folder Tree -->
+            <div class="p-3">
+                <div class="flex items-center justify-between px-3 py-2">
+                    <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                        Folders
+                    </h2>
+                    <button @click="openCreateFolderModal()" class="text-xs text-gray-400 hover:text-gray-100">
+                        <span>+</span>
+                    </button>
+                </div>
+                <template x-if="folderTree">
+                    <div x-html="renderFolderTree(folderTree)"></div>
+                </template>
+            </div>
+
+            <!-- Albums Section -->
+            <div class="p-3">
+                <div class="flex items-center justify-between px-3 py-2">
+                    <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Albums</h2>
+                    <button @click="showCreateAlbum = true" class="text-xs text-gray-400 hover:text-gray-100">
+                        <span>+</span>
+                    </button>
+                </div>
+                <template x-for="album in albums" :key="album.id">
+                    <div
+                        @click="selectAlbum(album.id)"
+                        @dragover.prevent="$event.currentTarget.classList.add('bg-blue-600')"
+                        @dragleave="$event.currentTarget.classList.remove('bg-blue-600')"
+                        @drop.prevent="handleDropOnAlbum($event, album.id)"
+                        :class="currentAlbum === album.id ? 'bg-gray-700 text-blue-400' : ''"
+                        class="px-3 py-2 hover:bg-gray-700 cursor-pointer rounded text-sm transition">
+                        <span x-text="album.name"></span>
+                        <span class="text-xs text-gray-500 ml-1" x-text="'(' + album.photo_count + ')'"></span>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Tags Section -->
+            <div class="p-3">
+                <div class="flex items-center justify-between px-3 py-2">
+                    <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Tags</h2>
+                    <button @click="showCreateTag = true" class="text-xs text-gray-400 hover:text-gray-100">
+                        <span>+</span>
+                    </button>
+                </div>
+                <template x-for="tag in tags" :key="tag.id">
+                    <div
+                        @click="selectTag(tag.id)"
+                        @dragover.prevent="$event.currentTarget.classList.add('bg-green-600')"
+                        @dragleave="$event.currentTarget.classList.remove('bg-green-600')"
+                        @drop.prevent="handleDropOnTag($event, tag.id)"
+                        :class="currentTag === tag.id ? 'bg-gray-700 text-blue-400' : ''"
+                        class="px-3 py-2 hover:bg-gray-700 cursor-pointer rounded text-sm transition">
+                        <span x-text="tag.name"></span>
+                        <span class="text-xs text-gray-500 ml-1" x-text="'(' + tag.photo_count + ')'"></span>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Recycle Bin -->
+            <div class="p-3">
+                <div class="px-3 py-2">
+                    <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Recycle Bin</h2>
+                </div>
+                <div
+                    @click="viewRecycleBin()"
+                    @dragover.prevent="$event.currentTarget.classList.add('bg-red-600')"
+                    @dragleave="$event.currentTarget.classList.remove('bg-red-600')"
+                    @drop.prevent="handleDropOnRecycleBin($event)"
+                    :class="currentView === 'recycle-bin' ? 'bg-gray-700 text-blue-400' : ''"
+                    class="px-3 py-2 hover:bg-gray-700 cursor-pointer rounded text-sm transition">
+                    <span>Deleted Photos</span>
+                    <span class="text-xs text-gray-500 ml-1" x-text="'(' + recycleBinCount + ')'"></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+            <!-- Header Bar -->
+            <header class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-center gap-4">
+                <input
+                    type="text"
+                    x-model="searchQuery"
+                    @input="performSearch()"
+                    placeholder="Search photos by filename..."
+                    class="flex-1 bg-gray-900 border border-gray-700 text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-600 px-3 py-2">
+
+                <!-- Empty Recycle Bin button (only show in recycle bin view) -->
+                <template x-if="currentView === 'recycle-bin' && recycleBinCount > 0">
+                    <button
+                        @click="emptyRecycleBin()"
+                        class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                        Empty Recycle Bin
+                    </button>
+                </template>
+
+                <!-- Selection mode controls (only show when photos are selected) -->
+                <template x-if="selectedPhotos.size > 0">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm text-gray-300" x-text="selectedPhotos.size + ' selected'"></span>
+                        <button @click="selectAllPhotos()" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition text-sm">
+                            Select All
+                        </button>
+                        <button @click="clearSelection(); isSelecting = false" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition text-sm">
+                            Clear
+                        </button>
+                    </div>
+                </template>
+
+                <button
+                    @click="scanLibrary()"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                    Scan Library
+                </button>
+
+                <button
+                    @click="logout()"
+                    class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+                    Logout
+                </button>
+            </header>
+
+            <!-- Breadcrumb / Current View -->
+            <div class="px-6 py-3 bg-gray-800 border-b border-gray-700 flex items-center gap-2">
+                <!-- Browse Up Button (only show in folder view) -->
+                <button
+                    x-show="currentView === 'folder' && currentFolder !== ''"
+                    @click="browseUp()"
+                    class="p-2 hover:bg-gray-700 rounded transition"
+                    title="Go to parent folder">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                </button>
+
+                <!-- Create Folder Button (only show in folder view) -->
+                <button
+                    x-show="currentView === 'folder'"
+                    @click="openCreateFolderModal(currentFolder)"
+                    class="p-2 hover:bg-gray-700 rounded transition"
+                    title="Create folder here">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path>
+                    </svg>
+                </button>
+
+                <!-- Breadcrumbs -->
+                <div class="text-sm flex items-center gap-1 flex-1" x-show="currentView === 'folder'">
+                    <button 
+                        @click="selectFolder('')"
+                        class="text-blue-400 hover:text-blue-300 transition">
+                        Photos
+                    </button>
+                    <template x-if="currentFolder">
+                        <template x-for="(part, index) in getBreadcrumbs()" :key="index">
+                            <div class="flex items-center gap-1">
+                                <span class="text-gray-500">/</span>
+                                <button 
+                                    @click="selectFolder(part.path)"
+                                    :class="index === getBreadcrumbs().length - 1 ? 'text-gray-100' : 'text-blue-400 hover:text-blue-300'"
+                                    class="transition"
+                                    x-text="part.name">
+                                </button>
+                            </div>
+                        </template>
+                    </template>
+                </div>
+                
+                <!-- Non-folder view label -->
+                <div class="text-sm text-gray-400" x-show="currentView !== 'folder'">
+                    <span x-text="currentViewLabel"></span>
+                </div>
+            </div>
+
+            <!-- Gallery Grid -->
+            <div class="flex-1 overflow-y-auto p-6">
+                <div class="grid grid-cols-8 gap-4">
+                    <!-- Go Up Tile (only show in subfolders) -->
+                    <template x-if="currentView === 'folder' && currentFolder !== ''">
+                        <div
+                            @click="browseUp()"
+                            class="rounded-lg overflow-hidden border-2 border-gray-600 hover:border-gray-500 transition cursor-pointer bg-gray-800">
+                            <div class="aspect-square bg-gray-800 flex items-center justify-center">
+                                <svg class="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                                </svg>
+                            </div>
+                            <div class="p-2 bg-gray-800 border-t-2 border-gray-600">
+                                <p class="text-xs text-gray-100 font-semibold truncate">..</p>
+                                <p class="text-xs text-gray-500">Go up</p>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Folders -->
+                    <template x-for="folder in folders" :key="folder.path">
+                        <div
+                            @click="selectFolder(folder.path)"
+                            @dblclick="toggleFolder(folder.path)"
+                            @dragover.prevent="$event.currentTarget.classList.add('bg-blue-600')"
+                            @dragleave="$event.currentTarget.classList.remove('bg-blue-600')"
+                            @drop.prevent="handleDrop($event, folder.path)"
+                            class="rounded-lg overflow-hidden border-2 border-blue-600 hover:border-blue-500 transition cursor-pointer bg-gray-800 group relative">
+                            <div class="aspect-square bg-gray-800 flex items-center justify-center">
+                                <svg class="w-16 h-16 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+
+                                <!-- Delete button (only for empty folders) -->
+                                <template x-if="folder.photo_count === 0">
+                                    <button
+                                        @click.stop="deleteFolder(folder.path)"
+                                        class="absolute top-2 right-2 p-1.5 bg-red-600 hover:bg-red-700 rounded shadow-lg transition opacity-0 group-hover:opacity-100"
+                                        title="Delete empty folder">
+                                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                    </button>
+                                </template>
+                            </div>
+                            <div class="p-2 bg-gray-800 border-t-2 border-blue-600">
+                                <p class="text-xs text-gray-100 font-semibold truncate" x-text="folder.name"></p>
+                                <p class="text-xs text-gray-500" x-text="folder.photo_count + ' photos'"></p>
+                            </div>
+                        </div>
+                    </template>
+                    
+                    <!-- Photos -->
+                    <template x-for="photo in photos" :key="photo.id">
+                        <div
+                            draggable="true"
+                            @dragstart="handleDragStart($event, photo.id)"
+                            @dragend="handleDragEnd($event)"
+                            :class="isPhotoSelected(photo.id) ? 'ring-4 ring-blue-500' : ''"
+                            class="rounded-lg overflow-hidden border border-gray-700 hover:border-gray-600 transition cursor-pointer group relative">
+                            <div class="aspect-square bg-gray-800 relative"
+                                @click="openLightbox(photo)">
+                                <img
+                                    :src="'/api/photos/' + photo.id + '/thumbnail'"
+                                    :alt="photo.filename"
+                                    loading="lazy"
+                                    class="w-full h-full object-cover pointer-events-none">
+
+                                <!-- Google Photos-style selection circle (top-left) -->
+                                <div
+                                    @click.stop="togglePhotoSelection(photo.id, $event)"
+                                    class="absolute top-2 left-2 z-10 cursor-pointer"
+                                    :class="currentView !== 'recycle-bin' ? 'opacity-0 group-hover:opacity-100' : 'hidden'"
+                                    :style="isPhotoSelected(photo.id) ? 'opacity: 1 !important' : ''">
+                                    <div
+                                        :class="isPhotoSelected(photo.id) ? 'bg-blue-600 border-blue-600' : 'bg-white/30 backdrop-blur-sm border-white hover:bg-white/50'"
+                                        class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all">
+                                        <svg
+                                            x-show="isPhotoSelected(photo.id)"
+                                            class="w-4 h-4 text-white"
+                                            fill="currentColor"
+                                            viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                        </svg>
+                                    </div>
+                                </div>
+                                
+                                <!-- Action icons (show on hover) -->
+                                <div class="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <!-- Restore button (only in recycle bin) -->
+                                    <template x-if="currentView === 'recycle-bin'">
+                                        <button
+                                            @click.stop="restorePhoto(photo)"
+                                            title="Restore photo"
+                                            class="p-1.5 bg-green-600 hover:bg-green-700 rounded shadow-lg transition">
+                                            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                                            </svg>
+                                        </button>
+                                    </template>
+                                    
+                                    <!-- Album and Tag buttons (not in recycle bin) -->
+                                    <template x-if="currentView !== 'recycle-bin'">
+                                        <div class="flex gap-1">
+                                            <!-- Add to Album -->
+                                            <button
+                                                @click.stop="openAddAlbum(photo)"
+                                                title="Add to album"
+                                                class="p-1.5 bg-blue-600 hover:bg-blue-700 rounded shadow-lg transition">
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                                                </svg>
+                                            </button>
+                                            
+                                            <!-- Add Tag -->
+                                            <button
+                                                @click.stop="openAddTag(photo)"
+                                                title="Add tag"
+                                                class="p-1.5 bg-green-600 hover:bg-green-700 rounded shadow-lg transition">
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="p-2 bg-gray-800">
+                                <p class="text-xs text-gray-400 truncate" x-text="photo.filename"></p>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="photos.length === 0 && folders.length === 0" class="text-center text-gray-500 py-12">
+                    <p>No photos or folders found</p>
+                </div>
+
+                <!-- Pagination -->
+                <div x-show="totalPages > 1" class="mt-6 flex items-center justify-center gap-2">
+                    <button
+                        @click="changePage(currentPage - 1)"
+                        :disabled="currentPage === 1"
+                        :class="currentPage === 1 ? 'opacity-50 cursor-not-allowed' : ''"
+                        class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition">
+                        Previous
+                    </button>
+                    <span class="text-gray-400" x-text="'Page ' + currentPage + ' of ' + totalPages"></span>
+                    <button
+                        @click="changePage(currentPage + 1)"
+                        :disabled="currentPage === totalPages"
+                        :class="currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : ''"
+                        class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition">
+                        Next
+                    </button>
+                </div>
+            </div>
+        </main>
+            </div>
+        </template>
+
+        <!-- Lightbox Modal -->
+        <div
+            x-show="lightboxOpen"
+            @click="closeLightbox()"
+            @keydown.escape.window="closeLightbox()"
+            @keydown.arrow-left.window="previousPhoto()"
+            @keydown.arrow-right.window="nextPhoto()"
+            class="fixed inset-0 z-50 bg-black/95 backdrop-blur flex items-center justify-center overflow-hidden"
+            style="display: none;">
+
+            <!-- Controls at top center -->
+            <div x-show="selectedPhoto" @click.stop class="absolute top-4 left-1/2 transform -translate-x-1/2 bg-gray-900/90 backdrop-blur rounded-lg px-4 py-3 border border-gray-700 shadow-2xl z-10">
+                <div class="flex items-center gap-3">
+                    <h3 class="text-sm font-semibold text-gray-100 max-w-xs truncate" x-text="selectedPhoto?.filename"></h3>
+                    <div class="flex gap-2">
+                        <a
+                            :href="selectedPhoto ? '/api/photos/' + selectedPhoto.id + '/image' : '#'"
+                            target="_blank"
+                            class="px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 transition text-sm inline-block"
+                            title="Open full size in new tab">
+                            Full Size
+                        </a>
+                        <a
+                            :href="selectedPhoto ? '/api/photos/' + selectedPhoto.id + '/image' : '#'"
+                            :download="selectedPhoto?.filename"
+                            class="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition text-sm inline-block">
+                            Download
+                        </a>
+                        <button @click.stop="deletePhoto(selectedPhoto.id)" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition text-sm">
+                            Delete
+                        </button>
+                        <button @click.stop="closeLightbox()" class="px-3 py-1 bg-gray-700 text-white rounded hover:bg-gray-600 transition text-sm">
+                            Close (ESC)
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Image -->
+            <div @click.stop class="flex items-center justify-center w-full h-full">
+                <img
+                    x-show="selectedPhoto"
+                    :src="selectedPhoto ? '/api/photos/' + selectedPhoto.id + '/preview' : ''"
+                    :alt="selectedPhoto ? selectedPhoto.filename : ''"
+                    class="object-contain"
+                    style="max-width: 90vw; max-height: 90vh; width: auto; height: auto;">
+            </div>
+        </div>
+
+        <!-- Create Album Modal -->
+        <div
+            x-show="showCreateAlbum"
+            @click="showCreateAlbum = false"
+            class="fixed inset-0 z-50 bg-black/50 backdrop-blur flex items-center justify-center"
+            style="display: none;">
+            <div @click.stop class="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl p-6 w-96">
+                <h2 class="text-xl font-semibold text-gray-100 mb-4">Create Album</h2>
+                <input
+                    type="text"
+                    x-model="newAlbumName"
+                    placeholder="Album name"
+                    class="w-full bg-gray-900 border border-gray-700 text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-600 px-3 py-2 mb-3">
+                <textarea
+                    x-model="newAlbumDescription"
+                    placeholder="Description (optional)"
+                    class="w-full bg-gray-900 border border-gray-700 text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-600 px-3 py-2 mb-4"
+                    rows="3"></textarea>
+                <div class="flex gap-2">
+                    <button @click="createAlbum()" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        Create
+                    </button>
+                    <button @click="showCreateAlbum = false" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Tag Modal -->
+        <div
+            x-show="showCreateTag"
+            @click="showCreateTag = false"
+            class="fixed inset-0 z-50 bg-black/50 backdrop-blur flex items-center justify-center"
+            style="display: none;">
+            <div @click.stop class="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl p-6 w-96">
+                <h2 class="text-xl font-semibold text-gray-100 mb-4">Create Tag</h2>
+                <input
+                    type="text"
+                    x-model="newTagName"
+                    placeholder="Tag name"
+                    class="w-full bg-gray-900 border border-gray-700 text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-600 px-3 py-2 mb-4">
+                <div class="flex gap-2">
+                    <button @click="createTag()" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        Create
+                    </button>
+                    <button @click="showCreateTag = false" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Folder Modal -->
+        <div
+            x-show="showCreateFolder"
+            @click="showCreateFolder = false"
+            class="fixed inset-0 z-50 bg-black/50 backdrop-blur flex items-center justify-center"
+            style="display: none;">
+            <div @click.stop class="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl p-6 w-96">
+                <h2 class="text-xl font-semibold text-gray-100 mb-4">Create Folder</h2>
+                <div x-show="newFolderParent" class="mb-3">
+                    <label class="text-sm text-gray-400">Parent folder:</label>
+                    <div class="text-sm text-gray-300" x-text="newFolderParent || 'Photos (root)'"></div>
+                </div>
+                <input
+                    type="text"
+                    x-model="newFolderPath"
+                    placeholder="Folder name"
+                    @keydown.enter="createFolder()"
+                    class="w-full bg-gray-900 border border-gray-700 text-gray-100 rounded-lg focus:ring-2 focus:ring-blue-600 px-3 py-2 mb-4">
+                <div class="flex gap-2">
+                    <button @click="createFolder()" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        Create
+                    </button>
+                    <button @click="showCreateFolder = false" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add to Album Modal -->
+        <div
+            x-show="showAddToAlbum"
+            @click="showAddToAlbum = false"
+            class="fixed inset-0 z-50 bg-black/50 backdrop-blur flex items-center justify-center"
+            style="display: none;">
+            <div @click.stop class="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl p-6 w-96 max-h-[80vh] overflow-y-auto">
+                <h2 class="text-xl font-semibold text-gray-100 mb-4">Add to Album</h2>
+                <div x-show="selectedPhotoForAlbum" class="mb-4">
+                    <p class="text-sm text-gray-400 mb-3" x-text="'Photo: ' + (selectedPhotoForAlbum?.filename || '')"></p>
+                </div>
+
+                <!-- Create New Album Button -->
+                <button
+                    @click="showInlineAlbumCreate = !showInlineAlbumCreate"
+                    class="w-full mb-3 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-lg transition text-sm flex items-center justify-center gap-2">
+                    <span x-show="!showInlineAlbumCreate">+ Create New Album</span>
+                    <span x-show="showInlineAlbumCreate">- Cancel</span>
+                </button>
+
+                <!-- Inline Album Creation Form -->
+                <div x-show="showInlineAlbumCreate" class="mb-4 p-3 bg-gray-900 rounded-lg border border-gray-700">
+                    <input
+                        type="text"
+                        x-model="inlineAlbumName"
+                        placeholder="Album name"
+                        @keydown.enter="createAlbumInline()"
+                        class="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded px-3 py-2 mb-2 text-sm">
+                    <input
+                        type="text"
+                        x-model="inlineAlbumDescription"
+                        placeholder="Description (optional)"
+                        @keydown.enter="createAlbumInline()"
+                        class="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded px-3 py-2 mb-2 text-sm">
+                    <button
+                        @click="createAlbumInline()"
+                        class="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition text-sm">
+                        Create & Add
+                    </button>
+                </div>
+
+                <div class="space-y-2 mb-4">
+                    <template x-for="album in albums" :key="album.id">
+                        <label class="flex items-center gap-2 p-2 hover:bg-gray-700 rounded cursor-pointer">
+                            <input
+                                type="checkbox"
+                                :value="album.id"
+                                :checked="photoAlbums.includes(album.id)"
+                                @change="togglePhotoInAlbum(album.id)"
+                                class="rounded border-gray-600 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm text-gray-100" x-text="album.name"></span>
+                        </label>
+                    </template>
+                </div>
+                <div class="flex gap-2">
+                    <button @click="applyAlbumChanges()" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        Done
+                    </button>
+                    <button @click="showAddToAlbum = false" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Tag Modal -->
+        <div
+            x-show="showAddTag"
+            @click="showAddTag = false"
+            class="fixed inset-0 z-50 bg-black/50 backdrop-blur flex items-center justify-center"
+            style="display: none;">
+            <div @click.stop class="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl p-6 w-96 max-h-[80vh] overflow-y-auto">
+                <h2 class="text-xl font-semibold text-gray-100 mb-4">Add Tags</h2>
+                <div x-show="selectedPhotoForTag" class="mb-4">
+                    <p class="text-sm text-gray-400 mb-3" x-text="'Photo: ' + (selectedPhotoForTag?.filename || '')"></p>
+                </div>
+
+                <!-- Create New Tag Button -->
+                <button
+                    @click="showInlineTagCreate = !showInlineTagCreate"
+                    class="w-full mb-3 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-lg transition text-sm flex items-center justify-center gap-2">
+                    <span x-show="!showInlineTagCreate">+ Create New Tag</span>
+                    <span x-show="showInlineTagCreate">- Cancel</span>
+                </button>
+
+                <!-- Inline Tag Creation Form -->
+                <div x-show="showInlineTagCreate" class="mb-4 p-3 bg-gray-900 rounded-lg border border-gray-700">
+                    <input
+                        type="text"
+                        x-model="inlineTagName"
+                        placeholder="Tag name"
+                        @keydown.enter="createTagInline()"
+                        class="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded px-3 py-2 mb-2 text-sm">
+                    <button
+                        @click="createTagInline()"
+                        class="w-full px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded transition text-sm">
+                        Create & Add
+                    </button>
+                </div>
+
+                <div class="space-y-2 mb-4">
+                    <template x-for="tag in tags" :key="tag.id">
+                        <label class="flex items-center gap-2 p-2 hover:bg-gray-700 rounded cursor-pointer">
+                            <input
+                                type="checkbox"
+                                :value="tag.id"
+                                :checked="photoTags.includes(tag.id)"
+                                @change="togglePhotoTag(tag.id)"
+                                class="rounded border-gray-600 text-green-600 focus:ring-green-600">
+                            <span class="text-sm text-gray-100" x-text="tag.name"></span>
+                        </label>
+                    </template>
+                </div>
+                <div class="flex gap-2">
+                    <button @click="applyTagChanges()" class="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                        Done
+                    </button>
+                    <button @click="showAddTag = false" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Generic Confirmation Modal -->
+        <div
+            x-show="showConfirmModal"
+            @click="cancelConfirm()"
+            class="fixed inset-0 z-50 bg-black/50 backdrop-blur flex items-center justify-center"
+            style="display: none;">
+            <div @click.stop class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+                <h3 class="text-lg font-semibold text-gray-100 mb-4" x-text="confirmTitle"></h3>
+                <p class="text-gray-300 mb-6" x-text="confirmMessage"></p>
+                <div class="flex gap-2">
+                    <button @click="confirmAction()" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                        Confirm
+                    </button>
+                    <button @click="cancelConfirm()" class="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div class="fixed top-4 right-4 z-50 flex flex-col gap-2" style="max-width: 400px;">
+            <template x-for="toast in toasts" :key="toast.id">
+                <div
+                    x-show="toast.show"
+                    x-transition:enter="transition ease-out duration-300"
+                    x-transition:enter-start="opacity-0 transform translate-x-8"
+                    x-transition:enter-end="opacity-100 transform translate-x-0"
+                    x-transition:leave="transition ease-in duration-200"
+                    x-transition:leave-start="opacity-100 transform translate-x-0"
+                    x-transition:leave-end="opacity-0 transform translate-x-8"
+                    @click="removeToast(toast.id)"
+                    :class="{
+                        'bg-green-600': toast.type === 'success',
+                        'bg-red-600': toast.type === 'error',
+                        'bg-yellow-600': toast.type === 'warning',
+                        'bg-blue-600': toast.type === 'info'
+                    }"
+                    class="px-4 py-3 rounded-lg shadow-lg text-white cursor-pointer hover:opacity-90 transition">
+                    <p class="text-sm font-medium" x-text="toast.message"></p>
+                </div>
+            </template>
+        </div>
+    </div>
+</body>
+</html>
