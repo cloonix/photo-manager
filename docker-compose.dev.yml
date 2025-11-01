@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  photo-manager:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${LOCAL_PHOTOS}:/photos:rw
+      - ${LOCAL_DATA}:/app/data
+    restart: unless-stopped
+    env_file: .env

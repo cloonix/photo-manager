@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   photo-manager:
-    build: .
+    image: ghcr.io/cloonix/photo-manager:latest
     ports:
       - "8000:8000"
     volumes:
