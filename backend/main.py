@@ -33,7 +33,9 @@ async def background_scan():
     await asyncio.sleep(2)  # Give app time to start
     try:
         scan_status["progress"] = "Scanning..."
-        stats = scan_library()
+        # Run blocking scan_library() in thread pool to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        stats = await loop.run_in_executor(None, scan_library)
         scan_status["running"] = False
         scan_status["progress"] = f"Complete: {stats}"
         print(f"Background scan complete: {stats}")
