@@ -1,5 +1,6 @@
 """Main FastAPI application entry point."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -18,6 +19,30 @@ from backend.services.watcher import start_watcher, stop_watcher
 from backend.api import albums, folders, photos, recycle_bin, search, tags
 
 
+# Global scan status
+scan_status = {"running": False, "progress": None}
+
+
+async def background_scan():
+    """Run library scan in background without blocking startup."""
+    global scan_status
+    print("Starting background library scan...")
+    scan_status["running"] = True
+    scan_status["progress"] = "Initializing..."
+    
+    await asyncio.sleep(2)  # Give app time to start
+    try:
+        scan_status["progress"] = "Scanning..."
+        stats = scan_library()
+        scan_status["running"] = False
+        scan_status["progress"] = f"Complete: {stats}"
+        print(f"Background scan complete: {stats}")
+    except Exception as e:
+        scan_status["running"] = False
+        scan_status["progress"] = f"Error: {str(e)}"
+        print(f"Background scan error: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
@@ -31,11 +56,10 @@ async def lifespan(app: FastAPI):
     init_database()
     print("Database initialized")
 
-    # Run initial scan if configured
+    # Run initial scan in background if configured
     if config.SCAN_ON_STARTUP:
-        print("Running initial library scan...")
-        stats = scan_library()
-        print(f"Initial scan complete: {stats}")
+        asyncio.create_task(background_scan())
+        print("Background scan scheduled")
 
     # Start filesystem watcher if configured
     if config.AUTO_WATCH:
@@ -149,7 +173,11 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "scan_running": scan_status["running"],
+        "scan_progress": scan_status["progress"]
+    }
 
 
 # Stats endpoint
